@@ -71,6 +71,26 @@ def main():
     price_offset = 1
     bond_fair_value = 1000
 
+    best_buy_prices = {
+            "BOND":1000,
+            "VALBZ":-999,
+            "VALE":-999,
+            "GS":-999,
+            "MS":-999,
+            "WFC":-999,
+            "XLF":-999
+            }
+    
+    best_sell_prices = {
+        "BOND":1000,
+        "VALBZ":999,
+        "VALE":999,
+        "GS":999,
+        "MS":999,
+        "WFC":999,
+        "XLF":999
+        }
+
     while True:
         message = exchange.read_message()
 
@@ -82,7 +102,9 @@ def main():
             if message["symbol"] == "BOND":
                 # Check if there are bids and offers in the book
                 best_bid = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
+                best_buy_prices['BOND'] = best_bid
                 best_ask = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
+                best_sell_prices['BOND'] = best_ask
                 
                 # Adjusting strategy to buy BOND for less than $1000 and sell for more than $1000
                 if best_bid > 0 and best_bid + price_offset < bond_fair_value:
@@ -97,45 +119,46 @@ def main():
                     exchange.send_add_message(order_id, "BOND", Dir.SELL, sell_price, 1)
                     order_id += 1
 
-            arb_time = time.time()
+            if message["symbol"] == "GS":
+                best_buy_prices['GS'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
+                best_sell_prices['GS'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
+            if message["symbol"] == "MS":
+                best_buy_prices['MS'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
+                best_sell_prices['MS'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
+            if message["symbol"] == "WFC":
+                best_buy_prices['WFC'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
+                best_sell_prices['WFC'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
+            if message["symbol"] == "XLF":
+                best_buy_prices['XLF'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
+                best_sell_prices['XLF'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
 
-            now = time.time()
+            
 
-            while now < arb_time + 5:
-                buy_price = []
-                if message["symbol"] == "BOND":
-                    temp = 3 * max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
-                    buy_price.append(temp)
-                if message["symbol"] == "GS":
-                    temp = 2 * max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
-                    buy_price.append(temp)
-                if message["symbol"] == "MS":
-                    temp = 3 * max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
-                    buy_price.append(temp)
-                if message["symbol"] == "WFC":
-                    temp = 2 * max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
-                    buy_price.append(temp)
+            if best_sell_prices['XLF'] < sum(list(best_buy_prices.values())[:-1]) - 10:
+                exchange.send_add_message(order_id, "BOND", Dir.SELL, best_buy_prices["BOND"], 3)
+                order_id+=1
+                exchange.send_add_message(order_id, "GS", Dir.SELL, best_buy_prices["GS"], 2)
+                order_id+=1
+                exchange.send_add_message(order_id, "MS", Dir.SELL, best_buy_prices["MS"], 3)
+                order_id+=1
+                exchange.send_add_message(order_id, "WFC", Dir.SELL, best_buy_prices["WFC"], 3)
+                order_id+=1
+                exchange.send_add_message(order_id, "XLF", Dir.BUY, best_sell_prices["XLF"], 10)
+                order_id+=1
+            
+        
+            if best_buy_prices['XLF'] - 10 > sum(list(best_sell_prices.values())[:-1]):
+                exchange.send_add_message(order_id, "BOND", Dir.SELL, best_sell_prices["BOND"], 3)
+                order_id+=1
+                exchange.send_add_message(order_id, "GS", Dir.SELL, best_sell_prices["GS"], 2)
+                order_id+=1
+                exchange.send_add_message(order_id, "MS", Dir.SELL, best_sell_prices["MS"], 3)
+                order_id+=1
+                exchange.send_add_message(order_id, "WFC", Dir.SELL, best_sell_prices["WFC"], 3)
+                order_id+=1
+                exchange.send_add_message(order_id, "XLF", Dir.BUY, best_buy_prices["XLF"], 10)
+                order_id+=1
                 
-                if message["symbol"] == "XLF":
-                    xlf_ask = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
-
-                try:
-                    if xlf_ask < sum(buy_price)-10:
-                        exchange.send_add_message(order_id, "BOND", Dir.SELL, buy_price[0], 3)
-                        order_id+=1
-                        exchange.send_add_message(order_id, "GS", Dir.SELL, buy_price[1], 2)
-                        order_id+=1
-                        exchange.send_add_message(order_id, "MS", Dir.SELL, buy_price[2], 3)
-                        order_id+=1
-                        exchange.send_add_message(order_id, "WFC", Dir.SELL, buy_price[3], 3)
-                        order_id+=1
-                        exchange.send_add_message(order_id, "XLF", Dir.BUY, xlf_ask, 10)
-                        order_id+=1
-                except UnboundLocalError:
-                    pass
-                
-                now = time.time()
-
         elif message["type"] in ["error", "reject", "fill"]:
             print(message)
     
