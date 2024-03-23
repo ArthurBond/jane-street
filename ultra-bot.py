@@ -10,6 +10,8 @@ from enum import Enum
 import time
 import socket
 import json
+import math
+from collections import defaultdict as dd
 
 # ~~~~~============== CONFIGURATION  ==============~~~~~
 # Replace "REPLACEME" with your team name!
@@ -26,6 +28,18 @@ team_name = "ULTRATRADERS"
 # code is intended to be a working example, but it needs some improvement
 # before it will start making good trades!
 
+positions = {"GS":0}
+
+def handle_fill_message(message):
+    global positions
+    symbol = message['symbol']
+    quantity = int(message['size'])  # Ensure quantity is an integer
+    direction = message['dir']  # 'BUY' or 'SELL'
+    
+    if direction == 'BUY':
+        positions[symbol] += quantity
+    elif direction == 'SELL':
+        positions[symbol] -= quantity
 
 def main():
     args = parse_arguments()
@@ -38,90 +52,143 @@ def main():
     # have already bought/sold symbols and have non-zero positions.
     hello_message = exchange.read_message()
     print("First message from exchange:", hello_message)
-
-    # Send an order for BOND at a good price, but it is low enough that it is
-    # unlikely it will be traded against. Maybe there is a better price to
-    # pick? Also, you will need to send more orders over time.
-    # exchange.send_add_message(order_id=1, symbol="BOND", dir=Dir.BUY, price=990, size=1)
-    # exchange.send_add_message(order_id=1, symbol="SELL", dir=Dir.BUY, price=1010, size=1)
-    # Set up some variables to track the bid and ask price of a symbol. Right
-    # now this doesn't track much information, but it's enough to get a sense
-    # of the VALE market.
-    # vale_bid_price, vale_ask_price = None, None
-    # vale_last_print_time = time.time()
-
-    # Here is the main loop of the program. It will continue to read and
-    # process messages in a loop until a "close" message is received. You
-    # should write to code handle more types of messages (and not just print
-    # the message). Feel free to modify any of the starter code below.
-    #
-    # Note: a common mistake people make is to call write_message() at least
-    # once for every read_message() response.
-    #
-    # Every message sent to the exchange generates at least one response
-    # message. Sending a message in response to every exchange message will
-    # cause a feedback loop where your bot's messages will quickly be
-    # rate-limited and ignored. Please, don't do that!
-
-    # def best_price(side):
-    #     if message[side]:
-    #         return message[side][0][0]
         
     order_id = 1
+    arb_order_id = []
+    arb_order_id_s = []
     price_offset = 1
     bond_fair_value = 1000
 
     best_buy_prices = {
             "BOND":1000,
-            "VALBZ":-999,
-            "VALE":-999,
-            "GS":-999,
-            "MS":-999,
-            "WFC":-999,
-            "XLF":-999
+            "GS":-999e6,
+            "MS":-999e6,
+            "WFC":-999e6,
+            "XLF":-999e6
             }
     
     best_sell_prices = {
         "BOND":1000,
-        "VALBZ":999,
-        "VALE":999,
-        "GS":999,
-        "MS":999,
-        "WFC":999,
-        "XLF":999
+        "GS":999e6,
+        "MS":999e6,
+        "WFC":999e6,
+        "XLF":999e6
         }
+    
+    market_making = [0,0,0,0,0,0,0,0,0,0]
+
+    last_gs_buys = [100000,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]
+    last_gs_asks = [100000,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]+[0,0,0,0,0,0,0,0,0,0]
+
+    count = 0
 
     while True:
         message = exchange.read_message()
+
+        # if len(arb_order_id)>=5:
+        #     if message["type"]=="fill" and message["order_id"]==arb_order_id[0]:
+        #             print("hello")
+        #             if message["type"]=="fill" and message["order_id"]==arb_order_id[1]:
+        #                     if message["type"]=="fill" and message["order_id"]==arb_order_id[2]:
+        #                             if message["type"]=="fill" and message["order_id"]==arb_order_id[3]:
+        #                                     if message["type"]=="fill" and message["order_id"]==arb_order_id[4]:
+        #                                         # exchange.send_convert_message(order_id, "XLF", Dir.BUY, 10)
+        #                                         exchange.send_add_message(order_id, "XLF", Dir.BUY, best_sell_prices["XLF"], 10)
+        #                                         arb_order_id.append(order_id)
+        #                                         order_id+=1
+        # if len(arb_order_id_s)>=5:
+        #     if message["type"]=="fill" and message["order_id"]==arb_order_id_s[0]:
+        #             print("hello")
+        #             if message["type"]=="fill" and message["order_id"]==arb_order_id_s[1]:
+        #                     if message["type"]=="fill" and message["order_id"]==arb_order_id_s[2]:
+        #                             if message["type"]=="fill" and message["order_id"]==arb_order_id_s[3]:
+        #                                     if message["type"]=="fill" and message["order_id"]==arb_order_id_s[4]:
+        #                                         # exchange.send_convert_message(order_id, "XLF", Dir.BUY, 10)
+        #                                         exchange.send_add_message(order_id, "XLF", Dir.BUY, best_sell_prices["XLF"], 10)
+        #                                         arb_order_id_s.append(order_id)
+        #                                         order_id+=1
+
+        gs_pos = 0
 
         if message["type"] == "close":
             print("The round has ended")
             break
         elif message["type"] == "book":
             
-            if message["symbol"] == "BOND":
-                # Check if there are bids and offers in the book
-                best_bid = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
-                best_buy_prices['BOND'] = best_bid
-                best_ask = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
-                best_sell_prices['BOND'] = best_ask
+            # if message["symbol"] == "BOND":
+            #     # Check if there are bids and offers in the book
+            #     best_bid = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
+            #     best_buy_prices['BOND'] = best_bid
+            #     best_ask = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
+            #     best_sell_prices['BOND'] = best_ask
                 
-                # Adjusting strategy to buy BOND for less than $1000 and sell for more than $1000
-                if best_bid > 0 and best_bid + price_offset < bond_fair_value:
-                    # Place a buy order just above the best bid but still below $1000
-                    buy_price = min(best_bid + price_offset, bond_fair_value - 1)
-                    exchange.send_add_message(order_id, "BOND", Dir.BUY, buy_price, 1)
-                    order_id += 1
+            #     # Adjusting strategy to buy BOND for less than $1000 and sell for more than $1000
+            #     if best_bid > 0 and best_bid + price_offset < bond_fair_value:
+            #         # Place a buy order just above the best bid but still below $1000
+            #         buy_price = min(best_bid + price_offset, bond_fair_value - 1)
+            #         exchange.send_add_message(order_id, "BOND", Dir.BUY, buy_price, 1)
+            #         order_id += 1
 
-                if best_ask < float('inf') and best_ask - price_offset > bond_fair_value:
-                    # Place a sell order just below the best ask but still above $1000
-                    sell_price = max(best_ask - price_offset, bond_fair_value + 1)
-                    exchange.send_add_message(order_id, "BOND", Dir.SELL, sell_price, 1)
-                    order_id += 1
+            #     if best_ask < float('inf') and best_ask - price_offset > bond_fair_value:
+            #         # Place a sell order just below the best ask but still above $1000
+            #         sell_price = max(best_ask - price_offset, bond_fair_value + 1)
+            #         exchange.send_add_message(order_id, "BOND", Dir.SELL, sell_price, 1)
+            #         order_id += 1
 
             if message["symbol"] == "GS":
                 best_buy_prices['GS'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
-                best_sell_prices['GS'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
+                best_sell_prices['GS'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else 999e6
+                
+                
+                last_gs_buys.append(best_buy_prices['GS'])
+                theo_buy = sum(last_gs_buys[-50:]) / len(last_gs_buys[-50:])
+
+                last_gs_asks.append(best_sell_prices['GS'])
+                theo_sell = sum(last_gs_asks[-50:]) / len(last_gs_asks[-50:])
+
+                theo_spread = (theo_sell - theo_buy)
+
+                theo = theo_buy + 0.5*theo_spread
+
+                our_spread = (0.8*theo_spread)
+
+                our_buy =  math.ceil(theo-0.5*(our_spread))
+                our_ask = math.floor(theo+0.5*(our_spread))
+
+                count += 1
+
+                if count > 50:
+
+                    if our_buy < our_ask:
+                        print("WASSUP", positions)
+                        
+                        if positions["GS"] < 10:
+                            exchange.send_add_message(order_id, "GS", Dir.BUY, math.ceil(theo-0.5*(our_spread)), 1)
+                            order_id+=1
+                            market_making.append(order_id)
+                            exchange.send_cancel_message(market_making[0])
+                            market_making = market_making[1:]
+
+                        if positions["GS"] > -10:
+                            exchange.send_add_message(order_id, "GS", Dir.SELL,  math.floor(theo+0.5*(our_spread)), 1)
+                            order_id+=1
+                            market_making.append(order_id)
+                            exchange.send_cancel_message(market_making[0])
+                            market_making = market_making[1:]
+
+                    if positions["GS"] < -10 or positions["GS"] > 10:
+                        for id in market_making:
+                            exchange.send_cancel_message(id)
+                        market_making = [0,0,0,0,0,0,0,0,0,0]
+
+
+                    print(market_making)
+                    
+                    print(best_buy_prices["GS"], best_sell_prices["GS"])
+                    print(our_buy,our_ask)
+                    time.sleep(0.01)
+
+
             if message["symbol"] == "MS":
                 best_buy_prices['MS'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
                 best_sell_prices['MS'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
@@ -132,35 +199,72 @@ def main():
                 best_buy_prices['XLF'] = max(message["buy"], key=lambda x: x[0], default=[0, 0])[0] if message["buy"] else 0
                 best_sell_prices['XLF'] = min(message["sell"], key=lambda x: x[0], default=[float('inf'), 0])[0] if message["sell"] else float('inf')
 
-            
+        elif message['type'] == 'fill':
+            handle_fill_message(message)
 
-            if best_sell_prices['XLF'] < sum(list(best_buy_prices.values())[:-1]) - 10:
-                exchange.send_add_message(order_id, "BOND", Dir.SELL, best_buy_prices["BOND"], 3)
-                order_id+=1
-                exchange.send_add_message(order_id, "GS", Dir.SELL, best_buy_prices["GS"], 2)
-                order_id+=1
-                exchange.send_add_message(order_id, "MS", Dir.SELL, best_buy_prices["MS"], 3)
-                order_id+=1
-                exchange.send_add_message(order_id, "WFC", Dir.SELL, best_buy_prices["WFC"], 3)
-                order_id+=1
-                exchange.send_add_message(order_id, "XLF", Dir.BUY, best_sell_prices["XLF"], 10)
-                order_id+=1
-            
-        
-            if best_buy_prices['XLF'] - 10 > sum(list(best_sell_prices.values())[:-1]):
-                exchange.send_add_message(order_id, "BOND", Dir.SELL, best_sell_prices["BOND"], 3)
-                order_id+=1
-                exchange.send_add_message(order_id, "GS", Dir.SELL, best_sell_prices["GS"], 2)
-                order_id+=1
-                exchange.send_add_message(order_id, "MS", Dir.SELL, best_sell_prices["MS"], 3)
-                order_id+=1
-                exchange.send_add_message(order_id, "WFC", Dir.SELL, best_sell_prices["WFC"], 3)
-                order_id+=1
-                exchange.send_add_message(order_id, "XLF", Dir.BUY, best_buy_prices["XLF"], 10)
-                order_id+=1
-                
-        elif message["type"] in ["error", "reject", "fill"]:
+        elif message["type"] in ["error", "reject"]:
             print(message)
+            # message = exchange.read_message()  # Pseudocode for receiving a message
+
+        # market making
+        
+            
+        # bundle_sum = 3*best_buy_prices["BOND"] + 2*best_buy_prices["GS"] + 3*best_buy_prices["MS"] + 2*best_buy_prices["WFC"]
+
+        # if best_sell_prices['XLF'] < bundle_sum - 10 :
+        #     print(best_sell_prices['XLF'])
+        #     print(sum(list(best_buy_prices.values())[:-1]) - 10)
+        #     exchange.send_add_message(order_id, "BOND", Dir.SELL, best_buy_prices["BOND"], 3)
+        #     arb_order_id.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "GS", Dir.SELL, best_buy_prices["GS"], 2)
+        #     arb_order_id.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "MS", Dir.SELL, best_buy_prices["MS"], 3)
+        #     arb_order_id.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "WFC", Dir.SELL, best_buy_prices["WFC"], 2)
+        #     arb_order_id.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "XLF", Dir.BUY, best_sell_prices["XLF"], 10)
+        #     # exchange.send_convert_message(order_id, "XLF", Dir.S, 10)
+        #     arb_order_id.append(order_id)
+        #     order_id+=1
+
+        # # print(arb_order_id)
+
+        # # print(best_buy_prices)
+        # bundle_sum = 3*best_sell_prices["BOND"] + 2*best_sell_prices["GS"] + 3*best_sell_prices["MS"] + 2*best_sell_prices["WFC"]
+    
+        # if best_buy_prices['XLF'] - 10 > bundle_sum:
+        #     exchange.send_add_message(order_id, "BOND", Dir.BUY, best_sell_prices["BOND"], 3)
+        #     arb_order_id_s.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "GS", Dir.BUY, best_sell_prices["GS"], 2)
+        #     arb_order_id_s.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "MS", Dir.BUY, best_sell_prices["MS"], 3)
+        #     arb_order_id_s.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "WFC", Dir.BUY, best_sell_prices["WFC"], 2)
+        #     arb_order_id_s.append(order_id)
+        #     order_id+=1
+        #     exchange.send_add_message(order_id, "XLF", Dir.SELL, best_buy_prices["XLF"], 10)
+        #     arb_order_id_s.append(order_id)
+        #     order_id+=1
+                
+        # if len(arb_order_id) > 5:
+        #     for id in arb_order_id[:5]:
+        #         exchange.send_cancel_message(id)
+        #         arb_order_id = arb_order_id[5:]
+
+        # if len(arb_order_id_s) > 5:
+        #     for id in arb_order_id_s[:5]:
+        #         exchange.send_cancel_message(id)
+        #         arb_order_id_s = arb_order_id_s[5:]
+
+        #     print(arb_order_id_s)
+
     
 
 
